@@ -18,16 +18,10 @@
   description =
     "An agenix extension adding secret generation and automatic rekeying using a YubiKey or master-identity";
   outputs = { self, nixpkgs, flake-utils, devshell, pre-commit-hooks, ... }:
-    let allApps = [ "edit" "generate" "rekey" ];
+    let allApps = [ "edit" "rekey" ];
     in {
       nixosModules.agenixRekey = import ./modules/agenix-rekey.nix nixpkgs;
       nixosModules.default = self.nixosModules.agenixRekey;
-
-      # A nixpkgs overlay that adds the agenix CLI wrapper
-      overlays.default = self.overlays.agenix-rekey;
-      overlays.agenix-rekey = _final: prev: {
-        agenix-rekey = prev.callPackage ./nix/package.nix { inherit allApps; };
-      };
 
       configure = {
         # The path of the user's flake. Needed to run a sandbox-relaxed
@@ -75,7 +69,7 @@
     } // flake-utils.lib.eachDefaultSystem (system: rec {
       pkgs = import nixpkgs {
         inherit system;
-        overlays = [ devshell.overlays.default self.overlays.default ];
+        overlays = [ devshell.overlays.default ];
       };
 
       # `nix build`

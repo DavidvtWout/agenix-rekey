@@ -19,95 +19,6 @@ let
     appHostPkgs = rekeyHostPkgs;
     hostConfig = config;
   };
-
-  generatorType = types.submodule (submod: {
-    options = {
-      dependencies = mkOption {
-        type = types.listOf types.unspecified;
-        example = literalExpression
-          "[ config.age.secrets.basicAuthPw1 nixosConfigurations.machine2.config.age.secrets.basicAuthPw ]";
-        default = [ ];
-        description = ''
-          Other secrets on which this secret depends. This guarantees that in the final
-          `agenix generate` script, all dependencies will be generated before
-          this secret is generated, allowing you use their outputs via the passed `decrypt` function.
-
-          The given dependencies will be passed to the defined `script` via the `deps` parameter,
-          which will be a list of their true source locations (`rekeyFile`) in no particular order.
-
-          This should refer only to secret definitions from `config.age.secrets` that
-          have a generator. This is useful if you want to create derived secrets,
-          such as generating a .htpasswd file from several basic auth passwords.
-
-          You may refer to age secrets of other nixos hosts as long as all hosts
-          are rekeyed via the same flake.
-        '';
-      };
-
-      script = mkOption {
-        type = types.either types.str (types.functionTo types.str);
-        example = literalExpression ''
-          {
-            name,    # The name of the secret to be generated, as defined in `age.secrets.<name>`
-            secret,  # The definition of the secret to be generated
-            lib,     # Convenience access to the nixpkgs library
-            pkgs,    # The package set for the _host that is running the generation script_.
-                     #   Don't use any other packgage set!
-            file,    # The actual path to the .age file that will be written after
-                     #   this function returns and the content is encrypted.
-                     #   Useful to write additional information to adjacent files.
-            deps,    # The list of all secret files from our `dependencies`.
-                     #   Each entry is a set of `{ name, host, file }`, corresponding to
-                     #   the secret `nixosConfigurations.''${host}.age.secrets.''${name}`.
-                     #   `file` is the true source location of the secret's `rekeyFile`.
-                     #   You can extract the plaintext with `''${decrypt} ''${escapeShellArg dep.file}`.
-            decrypt, # The base rage command that can decrypt secrets to stdout by
-                     #   using the defined `masterIdentities`.
-            ...      # For future/unused arguments
-          }: '''
-            priv=$(''${pkgs.wireguard-tools}/bin/wg genkey)
-            ''${pkgs.wireguard-tools}/bin/wg pubkey <<< "$priv" > ''${lib.escapeShellArg (lib.removeSuffix ".age" file + ".pub")}
-            echo "$priv"
-          '''
-        '';
-        description = ''
-          This must either be the name of a globally defined generator, or
-          a function that evaluates to a script. The resulting script will be
-          added to the internal, global generation script verbatim and runs
-          outside of any sandbox. Refer to `age.generators` for example usage.
-
-          This allows you to create/overwrite adjacent files if neccessary, for example
-          when you also want to store the public key for a generated private key.
-          Refer to the example for a description of the arguments. The resulting
-          secret should be written to stdout and any info or errors to stderr.
-
-          Note that the script is run with `set -euo pipefail` conditions as the
-          normal user that runs `agenix generate`.
-        '';
-      };
-
-      _script = mkOption {
-        type = types.nullOr types.unspecified;
-        readOnly = true;
-        internal = true;
-        description = "The effective script definition.";
-        default = if isString submod.config.script then
-          config.age.generators.${submod.config.script}
-        else
-          submod.config.script;
-      };
-
-      tags = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        example = [ "wireguard" ];
-        description = ''
-          Optional list of tags that may be used to refer to secrets that use this generator.
-          Useful to regenerate all secrets matching a specific tag using `agenix generate -f -t wireguard`.
-        '';
-      };
-    };
-  });
 in {
   config = {
     assertions = [
@@ -122,21 +33,7 @@ in {
             filter isAbsolutePath config.age.rekey.masterIdentities
           }) is not.";
       }
-    ] ++ flatten (flip mapAttrsToList config.age.secrets
-      (secretName: secretCfg: [
-        {
-          assertion = isString secretCfg.generator
-            -> hasAttr secretCfg.generator config.age.generators;
-          message =
-            "age.secrets.${secretName}: generator '`${secretCfg.generator}`' is not defined in `age.generators`.";
-        }
-        {
-          assertion = secretCfg.generator != null -> secretCfg.rekeyFile
-            != null;
-          message =
-            "age.secrets.${secretName}: `rekeyFile` must be set when using a generator.";
-        }
-      ]));
+    ];
 
     warnings = let
       hasGoodSuffix = x:
@@ -165,42 +62,8 @@ in {
   };
 
   imports = [
-    (mkRenamedOptionModule [ "rekey" "forceRekeyOnSystem" ] [
-      "age"
-      "rekey"
-      "forceRekeyOnSystem"
-    ])
-    (mkRenamedOptionModule [ "rekey" "hostPubkey" ] [
-      "age"
-      "rekey"
-      "hostPubkey"
-    ])
-    (mkRenamedOptionModule [ "rekey" "masterIdentities" ] [
-      "age"
-      "rekey"
-      "masterIdentities"
-    ])
-    (mkRenamedOptionModule [ "rekey" "extraEncryptionPubkeys" ] [
-      "age"
-      "rekey"
-      "extraEncryptionPubkeys"
-    ])
-    (mkRenamedOptionModule [ "rekey" "agePlugins" ] [
-      "age"
-      "rekey"
-      "agePlugins"
-    ])
     ({ config, options, ... }: {
-      options.rekey.secrets = options.age.secrets // { visible = false; };
       config = {
-        warnings = optional (config.rekey.secrets != { }) ''
-          The option `rekey.secrets` has been integrated into `age.secrets`.
-          Generally, the new option specification is the compatible with the old one,
-          but all usages of `rekey.secrets.<name>.file` have to be replaced with
-          `age.secrets.<name>.rekeyFile`. Found ocurrences in:
-          ${showOptionWithDefLocs options.rekey.secrets}
-        '';
-
         age.secrets = mapAttrs (_: secret:
           mapAttrs' (n: nameValuePair (if n == "file" then "rekeyFile" else n))
           secret) config.rekey.secrets;
@@ -241,14 +104,6 @@ in {
               you should always use this option instead of `file`.
             '';
           };
-
-          generator = mkOption {
-            type = types.nullOr generatorType;
-            default = null;
-            example = { script = "passphrase"; };
-            description =
-              "If defined, this generator will be used to bootstrap this secret's when it doesn't exist.";
-          };
         };
         config = {
           # Produce a rekeyed age secret
@@ -256,40 +111,6 @@ in {
             "${rekeyedSecrets}/${submod.config.name}.age";
         };
       }));
-    };
-
-    generators = mkOption {
-      type = types.attrsOf (types.functionTo types.str);
-      example = ''
-        {
-          alnum = {pkgs, ...}: "''${pkgs.pwgen}/bin/pwgen -s 48 1";
-
-          # when using this, add some dependencies:
-          # age.secrets.<name>.generator = {
-          #   script = "aggregateHtpasswd";
-          #   dependencies = [ config.age.secrets.basicAuthPw1 config.age.secrets.basicAuthPw2 ];
-          # };
-          aggregateHtpasswd = { pkgs, lib, decrypt, deps, ... }:
-            lib.flip lib.concatMapStrings deps ({ name, host, file }: '''
-              echo "Aggregating "''${lib.escapeShellArg host}:''${lib.escapeShellArg name} >&2
-              # Decrypt the dependency containing the cleartext password,
-              # and run it through htpasswd to generate a bcrypt hash
-              ''${decrypt} ''${lib.escapeShellArg file} \
-                | ''${pkgs.apacheHttpd}/bin/htpasswd -niBC 10 ''${lib.escapeShellArg host}
-            ''');
-          };
-        }
-      '';
-      description = ''
-        Allows defining reusable secret generator scripts. By default these generators are provided:
-
-        - `alnum`: Generates an alphanumeric string of length 48
-        - `base64`: Generates a base64 string of 32-byte random (length 44)
-        - `hex`: Generates a hex string of 24-byte random (length 48)
-        - `passphrase`: Generates a 6-word passphrase delimited by spaces
-        - `dhparams`: Generates 4096-bit dhparams
-        - `ssh-ed25519`: Generates a ssh-ed25519 private key
-      '';
     };
 
     rekey = {
@@ -379,8 +200,6 @@ in {
           Make sure to NEVER use a private key here, as it will end up in the public nix store!
         '';
         default = dummyPubkey;
-        #example = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI.....";
-        #example = "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq";
         example = literalExpression "./secrets/host1.pub";
         #example = "/etc/ssh/ssh_host_ed25519_key.pub";
       };
@@ -407,23 +226,6 @@ in {
         default = [ ];
         example = [ ./secrets/my-public-yubikey-identity.txt ];
       };
-      extraEncryptionPubkeys = mkOption {
-        type = with types; listOf (coercedTo path toString str);
-        description = ''
-          When using `agenix edit FILE`, the file will be encrypted for all identities in
-          rekey.masterIdentities by default. Here you can specify an extra set of pubkeys for which
-          all secrets should also be encrypted. This is useful in case you want to have a backup indentity
-          that must be able to decrypt all secrets but should not be used when attempting regular decryption.
-
-          If the coerced string is an absolute path, it will be used as if it was a recipient file.
-          Otherwise, the string will be interpreted as a public key.
-        '';
-        default = [ ];
-        example = [
-          ./backup-key.pub
-          "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq"
-        ];
-      };
       agePlugins = mkOption {
         type = types.listOf types.package;
         default = [ rekeyHostPkgs.age-plugin-yubikey ];
@@ -435,17 +237,5 @@ in {
         '';
       };
     };
-  };
-
-  config.age.generators = {
-    alnum = { pkgs, ... }: "${pkgs.pwgen}/bin/pwgen -s 48 1";
-    base64 = { pkgs, ... }: "${pkgs.openssl}/bin/openssl rand -base64 32";
-    hex = { pkgs, ... }: "${pkgs.openssl}/bin/openssl rand -hex 24";
-    passphrase = { pkgs, ... }:
-      "${pkgs.xkcdpass}/bin/xkcdpass --numwords=6 --delimiter=' '";
-    dhparams = { pkgs, ... }: "${pkgs.openssl}/bin/openssl dhparam 4096";
-    ssh-ed25519 = { pkgs, ... }:
-      ''
-        (exec 3>&1; ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -f /proc/self/fd/3 <<<y >/dev/null 2>&1; true)'';
   };
 }
