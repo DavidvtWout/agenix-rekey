@@ -1,9 +1,5 @@
-{
-  lib,
-  writeShellScriptBin,
-  stdenv,
-  allApps,
-}: writeShellScriptBin "agenix" ''
+{ lib, writeShellScriptBin, stdenv, allApps, }:
+writeShellScriptBin "agenix" ''
   set -euo pipefail
 
   function die() { echo "[1;31merror:[m $*" >&2; exit 1; }
@@ -38,7 +34,9 @@
     ${lib.concatStringsSep "|" allApps})
       APP=$1
       shift
-      exec nix run .#agenix-rekey.apps.${lib.escapeShellArg stdenv.hostPlatform.system}."$APP" -- "$@"
+      exec nix run .#agenix-rekey.apps.${
+        lib.escapeShellArg stdenv.hostPlatform.system
+      }."$APP" -- "$@"
       ;;
 
     *) die "Unknown command: $1" ;;

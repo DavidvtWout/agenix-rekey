@@ -15,27 +15,18 @@
     };
   };
 
-  description = "An agenix extension adding secret generation and automatic rekeying using a YubiKey or master-identity";
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-    devshell,
-    pre-commit-hooks,
-    ...
-  }: let
-    allApps = ["edit" "generate" "rekey"];
-  in
-    {
+  description =
+    "An agenix extension adding secret generation and automatic rekeying using a YubiKey or master-identity";
+  outputs = { self, nixpkgs, flake-utils, devshell, pre-commit-hooks, ... }:
+    let allApps = [ "edit" "generate" "rekey" ];
+    in {
       nixosModules.agenixRekey = import ./modules/agenix-rekey.nix nixpkgs;
       nixosModules.default = self.nixosModules.agenixRekey;
 
       # A nixpkgs overlay that adds the agenix CLI wrapper
       overlays.default = self.overlays.agenix-rekey;
       overlays.agenix-rekey = _final: prev: {
-        agenix-rekey = prev.callPackage ./nix/package.nix {
-          inherit allApps;
-        };
+        agenix-rekey = prev.callPackage ./nix/package.nix { inherit allApps; };
       };
 
       configure = {
@@ -45,8 +36,7 @@
         # All nixos definitions that should be considered for rekeying
         nodes,
         # The package sets to use. pkgs.${system} must yield an initialized nixpkgs package set
-        pkgs ? self.pkgs,
-      }:
+        pkgs ? self.pkgs, }:
         flake-utils.lib.eachDefaultSystem (system: {
           apps = pkgs.${system}.lib.genAttrs allApps (app:
             import ./apps/${app}.nix {
@@ -82,14 +72,10 @@
           userFlake = argsOrSelf; # argsOrSelf = self
           inherit pkgs nodes;
         };
-    }
-    // flake-utils.lib.eachDefaultSystem (system: rec {
+    } // flake-utils.lib.eachDefaultSystem (system: rec {
       pkgs = import nixpkgs {
         inherit system;
-        overlays = [
-          devshell.overlays.default
-          self.overlays.default
-        ];
+        overlays = [ devshell.overlays.default self.overlays.default ];
       };
 
       # `nix build`
@@ -98,7 +84,7 @@
       packages.agenix-rekey = pkgs.agenix-rekey;
 
       # `nix run`
-      apps.default = flake-utils.lib.mkApp {drv = packages.agenix-rekey;};
+      apps.default = flake-utils.lib.mkApp { drv = packages.agenix-rekey; };
 
       # `nix flake check`
       checks.pre-commit-hooks = pre-commit-hooks.lib.${system}.run {
@@ -128,7 +114,8 @@
           }
         ];
 
-        devshell.startup.pre-commit.text = self.checks.${system}.pre-commit-hooks.shellHook;
+        devshell.startup.pre-commit.text =
+          self.checks.${system}.pre-commit-hooks.shellHook;
       };
     });
 }
